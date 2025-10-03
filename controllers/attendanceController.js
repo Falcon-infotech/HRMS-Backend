@@ -165,12 +165,17 @@ export const markOutTime = async (req, res) => {
     }
 
     // const userTimeZone = req.user.timeZone || "UTC";
-    const userTimeZone = "UTC";
+    const userTimeZone = user.timeZone || "UTC";
 
     const date = moment().tz(userTimeZone).format("YYYY-MM-DD");
 
     const attendance = await AttendanceModel.findOne({ userId, date });
-    const holiday = await holidayModel.findOne({ date, isOptional: false });
+    const holidays = await getBranchHolidaysForUser(user);
+
+    // 2️⃣ Aaj ka date holiday me hai ya nahi check karo
+    const holiday = holidays.find(
+      (h) => moment(h.date).tz(user.timeZone).format("YYYY-MM-DD") === date
+    );
 
     const inTime = moment(attendance.inTime).tz(userTimeZone);
     const nineFifteen = moment(`${date} 09:15 AM`, "YYYY-MM-DD hh:mm A").tz(
@@ -362,11 +367,12 @@ export const getTodayAttendance = async (req, res) => {
     const isWeekend = branchWeekends.includes(currentDay);
 
     // ✅ Check branch-specific holiday
-    const holiday = await holidayModel.findOne({
-      date,
-      branch: branchId,
-      isOptional: false,
-    });
+    const holidays = await getBranchHolidaysForUser(user);
+
+    // 2️⃣ Aaj ka date holiday me hai ya nahi check karo
+    const holiday = holidays.find(
+      (h) => moment(h.date).format("YYYY-MM-DD") === date
+    );
 
     let attendance = await AttendanceModel.findOne({ date, userId });
 
@@ -502,11 +508,12 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
 
 
     // ✅ Check branch-specific holiday
-    const holiday = await holidayModel.findOne({
-      date: dateKey,
-      branch: branchId,
-      isOptional: false,
-    });
+    const holidays = await getBranchHolidaysForUser(user);
+
+    // 2️⃣ Aaj ka date holiday me hai ya nahi check karo
+    const holiday = holidays.find(
+      (h) => moment(h.date).tz(user.timeZone).format("YYYY-MM-DD") === date
+    );
 
     let attendance = await AttendanceModel.findOne({ date: dateKey, userId });
 
@@ -632,9 +639,11 @@ export const getAllUsersTodayAttendance = async (req, res) => {
 
       // ✅ Get branch-specific holidays
       const holidays = await getBranchHolidaysForUser(user);
+
       const holidayMap = {};
       holidays.forEach(h => {
-        holidayMap[moment(h.date).format("YYYY-MM-DD")] = h;
+        const key = moment(h.date).tz(user.timeZone).format("YYYY-MM-DD");
+        holidayMap[key] = h;
       });
 
       const att = attendanceMap[userId];
@@ -787,7 +796,8 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
       const holidays = await getBranchHolidaysForUser(user);
       const holidayMap = {};
       holidays.forEach(h => {
-        holidayMap[moment(h.date).format("YYYY-MM-DD")] = h;
+        const key = moment(h.date).tz(user.timeZone).format("YYYY-MM-DD");
+        holidayMap[key] = h;
       });
 
       let record = {
@@ -1110,7 +1120,8 @@ export const getAllUsersFullAttendanceHistory = async (req, res) => {
 
       const holidayMap = {};
       holidayRecords.forEach(h => {
-        holidayMap[moment(h.date).format("YYYY-MM-DD")] = h;
+        const key = moment(h.date).tz(user.timeZone).format("YYYY-MM-DD");
+        holidayMap[key] = h;
       });
 
       const leaveMap = {};
@@ -1413,6 +1424,122 @@ export const backFillAttendance = async (req, res) => {
   }
 };
 
+
+
+export const backFillAttendanceWithWeekends = async (req, res) => {
+  try {
+    const { userId, fromDate, toDate } = req.body;
+
+    if (!userId || !fromDate || !toDate) {
+      return res.status(400).json({
+        success: false,
+        message: "userId, fromDate and toDate are required",
+      });
+    }
+
+    const start = moment(fromDate, "YYYY-MM-DD");
+    const end = moment(toDate, "YYYY-MM-DD");
+
+    if (!start.isValid() || !end.isValid() || start.isAfter(end)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date range",
+      });
+    }
+
+    // ✅ Get user with branch
+    const user = await userModel.findById(userId).populate("branch");
+    if (!user || !user.branch) {
+      return res.status(404).json({
+        success: false,
+        message: "User or branch not found",
+      });
+    }
+
+    const branchWeekends = user.branch.weekends || []; // e.g. ["Sunday"] or ["Saturday","Sunday"]
+
+    const staticLocation = {
+      latitude: 19.1872137,
+      longitude: 77.3169113,
+      address: {
+        city: "Mumbai",
+        county: "Mumbai",
+        state_district: "Mumbai",
+        state: "Maharashtra",
+        postcode: "431600",
+        country: "India",
+        country_code: "in"
+      },
+      displayName: "Juhu Church Road, Juhu Market, K/W Ward, Zone 3, Mumbai, Mumbai Suburb…",
+      punchedFrom: "Web"
+    };
+
+    const attendanceRecords = [];
+    let skipped = 0;
+
+    let current = start.clone();
+    while (current.isSameOrBefore(end)) {
+      const day = current.format("dddd"); // e.g. "Monday"
+      const date = current.format("YYYY-MM-DD");
+
+      const exists = await AttendanceModel.findOne({ userId, date });
+      if (exists) {
+        skipped++;
+      } else {
+        if (branchWeekends.includes(day)) {
+          // ✅ Mark as weekend
+          attendanceRecords.push({
+            userId,
+            date,
+            status: "Weekend",
+            inTime: null,
+            outTime: null,
+            duration: "00:00:00",
+            location: {}
+          });
+        } else {
+          // ✅ Normal Present
+          const checkInMinute = 30 + Math.floor(Math.random() * 31);
+          const inTime = moment(`${date} 08:${checkInMinute}`, "YYYY-MM-DD HH:mm").toDate();
+
+          const checkOutMinute = 20 + Math.floor(Math.random() * 21);
+          const outTime = moment(`${date} 18:${checkOutMinute}`, "YYYY-MM-DD HH:mm").toDate();
+
+          attendanceRecords.push({
+            userId,
+            date,
+            inTime,
+            outTime,
+            status: "Present",
+            duration: moment.utc(outTime - inTime).format("HH:mm:ss"),
+            location: {
+              checkIn: staticLocation,
+              checkOut: staticLocation
+            }
+          });
+        }
+      }
+      current.add(1, "day");
+    }
+
+    if (attendanceRecords.length > 0) {
+      await AttendanceModel.insertMany(attendanceRecords);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Attendance backfill completed successfully",
+      totalInserted: attendanceRecords.length,
+      skipped,
+      data: attendanceRecords
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
 
 
 export const migrateAttendanceWithUserData = async (req, res) => {
