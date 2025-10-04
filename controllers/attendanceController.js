@@ -10,144 +10,110 @@ import path from "path";
 import fs from "fs";
 import { sendNotification } from "../utils/notificationutils.js";
 import branchModel from "../models/branchModel.js";
-import { getBranchHolidaysForUser, withoutDeletedUsers } from "../utils/commonUtils.js";
+import { buildFullAttendanceHistory, getBranchHolidaysForUser, getHolidaysForBranches, withoutDeletedUsers } from "../utils/commonUtils.js";
 import userModel from "../models/userModel.js";
 import { count } from "console";
 
-// Punch IN
+// ✅ Punch IN
 export const markInTime = async (req, res) => {
   try {
     const userId = req.user._id;
     const { location } = req.body;
     const latitude = location?.latitude;
     const longitude = location?.longitude;
+
     const user = await userModel.findById(userId).populate("branch", "_id branchName");
-    // const userTimeZone = user.timeZone || "UTC";
-    const userTimeZone = "UTC";
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    const date = moment().tz(userTimeZone).format("YYYY-MM-DD");
-    const currentDay = moment().tz(userTimeZone).format("dddd")
+    const userTimeZone = user.timeZone || "UTC";
+
+    // ✅ Always use UTC date (YYYY-MM-DD)
+    const date = moment().utc().format("YYYY-MM-DD");
+    const currentDay = moment().tz(userTimeZone).format("dddd");
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({ success: false, message: "Location coordinates required" });
+    }
+
     const existing = await AttendanceModel.findOne({ userId, date });
-
     const branchWeekends = user.branch?.weekends || [];
+
     if (branchWeekends.includes(currentDay)) {
       return res.status(400).json({
         success: false,
-        statusCode: 400,
         message: `Today is a weekend (${currentDay}) for your branch.`,
       });
     }
 
-    if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        message: "Location coordinates (latitude and longitude) are required.",
-      });
-    }
-    console.log("Using User-Agent:", process.env.NOMINATION_USER_AGENT);
     if (existing && existing.inTime) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "Already punched in today",
-      });
+      return res.status(400).json({ success: false, message: "Already punched in today" });
     }
 
-
+    // Reverse geocoding
     const response = await axios.get(
       `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-      {
-        headers: {
-          "User-Agent": process.env.NOMINATION_USER_AGENT,
-        },
-      }
+      { headers: { "User-Agent": process.env.NOMINATION_USER_AGENT } }
     );
 
-    // const response = await axios.get(`${process.env.SERVER_URL}/proxy/reverse-geocode`, {
-    //   params: { lat: latitude, lon: longitude },
-    // });
-
-
-    // console.log('response',response?.data)
-    let address = response?.data?.address;
-    const displayName = response?.data?.display_name;
+    let address = response?.data?.display_name || JSON.stringify(response?.data?.address);
     const userAgent = req.headers["user-agent"] || "";
-    let punchedFrom = "Unknown";
+    let punchedFrom = /mobile/i.test(userAgent) ? "Mobile" : /PostmanRuntime/i.test(userAgent) ? "Postman" : "Web";
 
-    if (/mobile/i.test(userAgent)) {
-      punchedFrom = "Mobile";
-    } else if (/PostmanRuntime/i.test(userAgent)) {
-      punchedFrom = "Postman";
-    } else {
-      punchedFrom = "Web";
-    }
+    // ✅ Store in UTC
+    const inTime = new Date();
 
-    let todayStatus = "Absent";
-    const inTime = moment().tz(userTimeZone).toDate();
-    const nineFifteen = moment(`${date} 09:15 AM`, "YYYY-MM-DD hh:mm A").tz(
-      userTimeZone
-    );
-    if (moment(inTime).isSameOrBefore(nineFifteen)) {
-      todayStatus = "Present";
-    } else {
-      // todayStatus = "Half Day";
-      todayStatus = "Present";
+    // Status calculation (use user timezone for logic)
+    const nineFifteen = moment.tz(`${moment().format("YYYY-MM-DD")} 09:15`, "YYYY-MM-DD HH:mm", userTimeZone);
+    let todayStatus = moment(inTime).tz(userTimeZone).isAfter(nineFifteen) ? "Present" : "Present";
 
+    if (todayStatus === "Present" && moment(inTime).tz(userTimeZone).isAfter(nineFifteen)) {
       await sendNotification({
         forRoles: ["admin", "hr"],
         title: "Late Punch IN Alert",
-        message: `${user.first_name} ${user.last_name
-          } Logged in late today at ${moment(inTime)
-            .tz(userTimeZone)
-            .format("hh:mm AM")}`,
+        message: `${user.first_name} ${user.last_name} logged in late today at ${moment(inTime)
+          .tz(userTimeZone)
+          .format("hh:mm A")}`,
         link: `/attendance`,
         type: "user",
         performedBy: user._id,
       });
     }
 
+    // Check holidays (user timezone)
+    const holidays = await getBranchHolidaysForUser(user);
+    const todayHoliday = holidays.find(
+      (h) => moment(h.date).tz(userTimeZone).format("YYYY-MM-DD") === moment().tz(userTimeZone).format("YYYY-MM-DD")
+    );
+    if (todayHoliday) todayStatus = "Holiday";
+
+    // Upsert attendance
     const attendanceStatus = await AttendanceModel.findOneAndUpdate(
       { userId, date },
       {
         $set: {
           inTime,
           outTime: null,
-          status: todayStatus || "Absent",
+          status: todayStatus,
           userName: `${user.first_name} ${user.last_name}`,
           userEmail: user.email,
-          "location.checkIn": {
-            latitude,
-            longitude,
-            address,
-            displayName,
-            punchedFrom,
-          },
+          "location.checkIn": { latitude, longitude, address, punchedFrom },
         },
       },
       { upsert: true, new: true }
     );
 
-    console.log('attendanceStatus', attendanceStatus)
-    await attendanceStatus.save();
-
     res.status(200).json({
       success: true,
-      statusCode: 200,
       message: "Punched IN successfully",
       attendance: attendanceStatus,
       punchedFrom,
     });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      statusCode: 500,
-      message: "Failed to punch IN",
-      error: err,
-    });
+    res.status(500).json({ success: false, message: "Failed to punch IN", error: err.message });
   }
 };
 
-// Punch OUT
+// ✅ Punch OUT
 export const markOutTime = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -155,171 +121,224 @@ export const markOutTime = async (req, res) => {
     const latitude = location?.latitude;
     const longitude = location?.longitude;
 
-    const user = await userModel.findById(userId);
-
     if (!latitude || !longitude) {
-      return res.status(400).json({
-        success: false,
-        message: "Location coordinates (latitude and longitude) are required.",
-      });
+      return res.status(400).json({ success: false, message: "Location coordinates required" });
     }
 
-    // const userTimeZone = req.user.timeZone || "UTC";
+    const user = await userModel.findById(userId);
     const userTimeZone = user.timeZone || "UTC";
 
-    const date = moment().tz(userTimeZone).format("YYYY-MM-DD");
+    // ✅ Always UTC
+    const date = moment().utc().format("YYYY-MM-DD");
 
-    const attendance = await AttendanceModel.findOne({ userId, date });
-    const holidays = await getBranchHolidaysForUser(user);
-
-    // 2️⃣ Aaj ka date holiday me hai ya nahi check karo
-    const holiday = holidays.find(
-      (h) => moment(h.date).tz(user.timeZone).format("YYYY-MM-DD") === date
-    );
-
-    const inTime = moment(attendance.inTime).tz(userTimeZone);
-    const nineFifteen = moment(`${date} 09:15 AM`, "YYYY-MM-DD hh:mm A").tz(
-      userTimeZone
-    );
-
+    let attendance = await AttendanceModel.findOne({ userId, date });
     if (!attendance || !attendance.inTime) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "You must punch in first",
-      });
+      return res.status(400).json({ success: false, message: "You must punch in first" });
     }
-
     if (attendance.outTime) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "Already punched out today",
-      });
+      return res.status(400).json({ success: false, message: "Already punched out today" });
     }
 
-    const outTime = moment().tz(userTimeZone).toDate();
+    const inTime = new Date(attendance.inTime); // UTC
+    const outTime = new Date(); // UTC now
 
-    const durationMs = outTime - new Date(attendance.inTime);
+    // Work duration
+    const durationMs = outTime - inTime;
     const duration = moment.utc(durationMs).format("HH:mm:ss");
 
-    attendance.outTime = outTime;
-    attendance.duration = duration;
-    await attendance.save();
-
+    // Reverse geocode
     const response = await axios.get(
       `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
-      {
-        headers: {
-          "User-Agent": process.env.NOMINATION_USER_AGENT,
-        },
-      }
+      { headers: { "User-Agent": process.env.NOMINATION_USER_AGENT } }
     );
 
     const address = response?.data?.address;
     const displayName = response?.data?.display_name;
+
     const userAgent = req.headers["user-agent"] || "";
-    let punchedFrom = "Unknown";
+    let punchedFrom = /mobile/i.test(userAgent) ? "Mobile" : /PostmanRuntime/i.test(userAgent) ? "Postman" : "Web";
 
-    if (/mobile/i.test(userAgent)) {
-      punchedFrom = "Mobile";
-    } else if (/PostmanRuntime/i.test(userAgent)) {
-      punchedFrom = "Postman";
-    } else {
-      punchedFrom = "Web";
-    }
-
+    // Attendance status logic
     let todayStatus = "Absent";
-    if (inTime.isSameOrBefore(nineFifteen)) {
-      todayStatus = "Present";
-    } else if (outTime) {
-      // const duration = moment.duration(outTime.diff(inTime)).asHours();
-      const duration = moment.duration(moment(outTime).diff(inTime)).asHours();
+    const nineFifteen = moment.tz(`${moment().format("YYYY-MM-DD")} 09:15`, "YYYY-MM-DD HH:mm", userTimeZone);
 
-      // duration > 5 && duration < 9
-      if (duration < 9) {
-        // todayStatus = "Half Day";
-        todayStatus = "Present";
-      }
-    } else {
-      // todayStatus = "Half Day";
+    if (moment(inTime).tz(userTimeZone).isSameOrBefore(nineFifteen)) {
       todayStatus = "Present";
+    } else {
+      const workHours = moment.duration(moment(outTime).diff(inTime)).asHours();
+      todayStatus = workHours < 9 ? "Half Day" : "Present";
     }
 
+    // Holidays (check in user timezone)
+    const holidays = await getBranchHolidaysForUser(user);
+    const holiday = holidays.find(
+      (h) => moment(h.date).tz(userTimeZone).format("YYYY-MM-DD") === moment().tz(userTimeZone).format("YYYY-MM-DD")
+    );
     if (holiday) {
-      if (!attendance) {
-        attendance = await AttendanceModel.create({
-          userId,
-          date,
-          inTime: null,
-          outTime: null,
-          status: "Holiday",
-        });
-      } else if (
-        !attendance.inTime &&
-        !attendance.outTime &&
-        attendance.status !== "Holiday"
-      ) {
-        attendance.status = "Holiday";
-        await attendance.save();
-      } else if (attendance.inTime && attendance.outTime) {
-        attendance.status = "Over Time";
+      if (!attendance.inTime && !attendance.outTime) {
+        todayStatus = "Holiday";
+      } else {
         todayStatus = "Over Time";
-        await attendance.save();
         await sendNotification({
           forRoles: ["admin", "hr"],
-          title: `${user.first_name} ${user.last_name}  Working Over Time`,
-          message: `${user.first_name} ${user.last_name}  Working as on Holiday as Over Time`,
-          // link: `/employee/${employee._id}/profile`,
+          title: `${user.first_name} ${user.last_name} Working Over Time`,
+          message: `${user.first_name} ${user.last_name} is working on Holiday as Over Time`,
           type: "user",
-          performedBy: req.user._id,
+          performedBy: user._id,
         });
       }
     }
 
-    const attendanceStatus = await AttendanceModel.findOneAndUpdate(
+    // Update attendance
+    attendance = await AttendanceModel.findOneAndUpdate(
       { userId, date },
       {
         $set: {
-          status: todayStatus || "Absent",
-          userName: `${user.first_name} ${user.last_name}`,   // 👈 add
+          outTime,
+          duration,
+          status: todayStatus,
+          userName: `${user.first_name} ${user.last_name}`,
           userEmail: user.email,
-          "location.checkOut": {
-            latitude,
-            longitude,
-            address,
-            displayName,
-            punchedFrom,
-          },
+          "location.checkOut": { latitude, longitude, address, displayName, punchedFrom },
         },
       },
       { upsert: true, new: true }
     );
 
-    await attendanceStatus.save();
+    res.status(200).json({
+      success: true,
+      message: "Punched OUT successfully",
+      attendance,
+      punchedFrom,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Failed to punch OUT", error: err.message });
+  }
+};
+
+
+// Get today's attendance (UTC safe)
+export const getTodayAttendance = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Fetch user with branch
+    const user = await userModel.findById(userId).populate("branch");
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if (!user.timeZone) {
+      return res.status(400).json({
+        success: false,
+        message: "User timezone not set. Please update user profile.",
+      });
+    }
+
+    const userTimeZone = user.timeZone || "UTC";
+
+    // Today's date in user's timezone
+    const today = moment().tz(userTimeZone).format("YYYY-MM-DD");
+    const currentDay = moment().tz(userTimeZone).format("dddd");
+
+    const branch = user.branch;
+    if (!branch) {
+      return res.status(400).json({ success: false, message: "User branch not found" });
+    }
+
+    if (!Array.isArray(branch.weekends) || branch.weekends.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Branch weekends not configured. Please update branch settings.",
+      });
+    }
+
+    const branchWeekends = branch.weekends;
+    const isWeekend = branchWeekends.includes(currentDay);
+
+    // Check branch-specific holidays
+    const holidays = await getBranchHolidaysForUser(user);
+    const todayHoliday = holidays.find(
+      (h) => moment(h.date).tz(userTimeZone).format("YYYY-MM-DD") === today
+    );
+
+    // Fetch or create today's attendance
+    let attendance = await AttendanceModel.findOne({ userId, date: today });
+
+    if (todayHoliday) {
+      if (!attendance) {
+        attendance = await AttendanceModel.create({
+          userId,
+          date: today,
+          inTime: null,
+          outTime: null,
+          status: "Holiday",
+          location: { checkIn: null, checkOut: null }
+        });
+      } else {
+        attendance.status = "Holiday";
+        await attendance.save();
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Today is a holiday for branch: ${branch.name}`,
+        date: today,
+        attendance,
+        branch: {
+          name: branch.name,
+          weekends: branchWeekends,
+        },
+      });
+    }
+
+    if (!attendance) {
+      attendance = await AttendanceModel.create({
+        userId,
+        date: today,
+        inTime: null,
+        outTime: null,
+        status: isWeekend ? "Weekend" : "Absent",
+        location: { checkIn: null, checkOut: null }
+      });
+    } else if (!attendance.inTime && !attendance.outTime) {
+      attendance.status = isWeekend ? "Weekend" : "Absent";
+      await attendance.save();
+    }
+
+    // Populate user details
+    await attendance.populate(
+      "userId",
+      "first_name last_name email status department designation salary role"
+    );
 
     res.status(200).json({
       success: true,
-      statusCode: 200,
-      message: "Punched OUT successfully",
-      attendance: attendanceStatus,
-      punchedFrom,
+      message: "Today's attendance fetched successfully",
+      date: today,
+      attendance,
+      branch: {
+        name: branch.name,
+        weekends: branchWeekends,
+      },
     });
   } catch (err) {
     res.status(500).json({
       success: false,
-      statusCode: 500,
-      message: "Failed to punch OUT",
+      message: "Failed to fetch today's attendance",
       error: err.message,
     });
   }
 };
 
+
+
 // Get today's attendance
-export const getTodayAttendance = async (req, res) => {
+// Get single user's attendance by date
+export const getSingleUserAttendanceByDate = async (req, res) => {
   try {
     const userId = req.user._id;
-    const date = moment().format("YYYY-MM-DD");
+    const { date } = req.query; // format: YYYY-MM-DD
 
     // ✅ Fetch user with branch
     const user = await userModel.findById(userId).populate("branch");
@@ -339,154 +358,17 @@ export const getTodayAttendance = async (req, res) => {
       });
     }
 
-    // const userTimeZone = user.timeZone;
-    const userTimeZone = "UTC";
+    const userTimeZone = user.timeZone;
 
-    const currentDay = moment().tz(userTimeZone).format("dddd");
+    // ✅ Target date in user's timezone
+    const targetDate = date
+      ? moment.tz(date, "YYYY-MM-DD", userTimeZone)
+      : moment().tz(userTimeZone);
+
+    const dateKey = targetDate.format("YYYY-MM-DD"); // save date as string
+    const currentDay = targetDate.format("dddd");
 
     const branch = user.branch;
-    console.log('branch', branch)
-    if (!branch) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "User branch not found",
-      });
-    }
-
-    if (!Array.isArray(branch.weekends) || branch.weekends.length === 0) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "Branch weekends not configured. Please update branch settings.",
-      });
-    }
-
-    const branchId = branch._id;
-    const branchWeekends = branch.weekends;
-    const isWeekend = branchWeekends.includes(currentDay);
-
-    // ✅ Check branch-specific holiday
-    const holidays = await getBranchHolidaysForUser(user);
-
-    // 2️⃣ Aaj ka date holiday me hai ya nahi check karo
-    const holiday = holidays.find(
-      (h) => moment(h.date).format("YYYY-MM-DD") === date
-    );
-
-    let attendance = await AttendanceModel.findOne({ date, userId });
-
-    // ✅ If today is a holiday
-    if (holiday) {
-      if (!attendance) {
-        attendance = await AttendanceModel.create({
-          userId,
-          date,
-          inTime: null,
-          outTime: null,
-          status: "Holiday",
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        statusCode: 200,
-        message: `Today is a holiday for branch: ${branch.name}`,
-        date,
-        attendance,
-        branch: {
-          name: branch.name,
-          weekends: branchWeekends,
-        },
-      });
-    }
-
-    // ✅ If no holiday → mark weekend or absent
-    if (!attendance) {
-      attendance = await AttendanceModel.create({
-        userId,
-        date,
-        inTime: null,
-        outTime: null,
-        status: isWeekend ? "Weekend" : "Absent",
-      });
-    } else if (
-      !attendance.inTime &&
-      !attendance.outTime &&
-      (attendance.status === "Absent" || !attendance.status)
-    ) {
-      attendance.status = isWeekend ? "Weekend" : "Absent";
-      await attendance.save();
-    }
-
-    // ✅ Populate user details (NO save after populate)
-    await attendance.populate(
-      "userId",
-      "first_name last_name email status department designation salary role"
-    );
-
-    // ✅ Final response
-    res.status(200).json({
-      success: true,
-      statusCode: 200,
-      message: "Today's attendance fetched successfully",
-      date,
-      attendance,
-      branch: {
-        name: branch.name,
-        weekends: branchWeekends,
-      },
-    });
-
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      statusCode: 500,
-      message: "Failed to fetch today's attendance",
-      error: err.message,
-    });
-  }
-};
-
-// Get today's attendance
-export const getSingleUserAttendanceByDate = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { date } = req.query; // Or req.body if you prefer POST
-    const targetDate = date ? moment(date, "YYYY-MM-DD") : moment();
-    const dateKey = targetDate.format("YYYY-MM-DD");
-
-    // const date = req.params.date || moment().format("YYYY-MM-DD");
-
-
-    // ✅ Fetch user with branch
-    const user = await userModel.findById(userId).populate("branch", "_id branchName");
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        statusCode: 404,
-        message: "User not found",
-      });
-    }
-
-    if (!user.timeZone) {
-      return res.status(400).json({
-        success: false,
-        statusCode: 400,
-        message: "User timezone not set. Please update user profile.",
-      });
-    }
-
-    // const userTimeZone = user.timeZone;
-    const userTimeZone = user?.timeZone || "UTC";
-
-    const currentDay = moment().tz(userTimeZone).format("dddd");
-
-
-
-    const userBranch = user.branch;
-    const branchId = userBranch._id;
-    const branch = await branchModel.findById({ _id: user.branch._id })
-
     if (!branch) {
       return res.status(400).json({
         success: false,
@@ -506,18 +388,15 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
     const branchWeekends = branch.weekends;
     const isWeekend = branchWeekends.includes(currentDay);
 
-
     // ✅ Check branch-specific holiday
     const holidays = await getBranchHolidaysForUser(user);
-
-    // 2️⃣ Aaj ka date holiday me hai ya nahi check karo
     const holiday = holidays.find(
-      (h) => moment(h.date).tz(user.timeZone).format("YYYY-MM-DD") === date
+      (h) => moment(h.date).tz(userTimeZone).format("YYYY-MM-DD") === dateKey
     );
 
-    let attendance = await AttendanceModel.findOne({ date: dateKey, userId });
+    // ✅ Get attendance for that user + date
+    let attendance = await AttendanceModel.findOne({ userId, date: dateKey });
 
-    // ✅ If today is a holiday
     if (holiday) {
       if (!attendance) {
         attendance = await AttendanceModel.create({
@@ -526,17 +405,17 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
           inTime: null,
           outTime: null,
           status: "Holiday",
-          location: { checkIn: null, checkOut: null }
+          location: { checkIn: null, checkOut: null },
         });
-      } else {
-        attendance.status = "Holiday"; // ✅ Save status
+      } else if (attendance.status !== "Holiday") {
+        attendance.status = "Holiday";
         await attendance.save();
       }
 
       return res.status(200).json({
         success: true,
         statusCode: 200,
-        message: `Today is a holiday for branch: ${branch.branchName}`,
+        message: `Date ${dateKey} is a holiday for branch: ${branch.branchName}`,
         date: dateKey,
         attendance,
         branch: {
@@ -546,8 +425,7 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
       });
     }
 
-    // ✅ If no holiday → mark weekend or absent
-    // ✅ If no holiday → mark weekend or absent
+    // ✅ If no holiday → mark weekend / absent
     if (!attendance) {
       attendance = await AttendanceModel.create({
         userId,
@@ -555,22 +433,19 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
         inTime: null,
         outTime: null,
         status: isWeekend ? "Weekend" : "Absent",
-        location: { checkIn: null, checkOut: null }
+        location: { checkIn: null, checkOut: null },
       });
-    } else {
-      // Agar attendance hai but inTime/outTime nahi hai toh status update karo
-      if (!attendance.inTime && !attendance.outTime) {
-        attendance.status = isWeekend ? "Weekend" : "Absent"; // ✅ Save status
-        await attendance.save();
-      }
+    } else if (!attendance.inTime && !attendance.outTime) {
+      attendance.status = isWeekend ? "Weekend" : "Absent";
+      await attendance.save();
     }
-    // ✅ Populate user details (NO save after populate)
+
+    // ✅ Populate user details
     await attendance.populate(
       "userId",
       "first_name last_name email status department designation salary role"
     );
 
-    // ✅ Final response
     res.status(200).json({
       success: true,
       statusCode: 200,
@@ -582,79 +457,65 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
         weekends: branchWeekends,
       },
     });
-
   } catch (err) {
     res.status(500).json({
       success: false,
       statusCode: 500,
-      message: `Failed to fetch attendance records`,
+      message: "Failed to fetch attendance record",
       error: err.message,
     });
   }
 };
 
 
+
 // Get all users' attendance for today
 export const getAllUsersTodayAttendance = async (req, res) => {
   try {
-    const today = moment().startOf("day");
-    const dateKey = today.format("YYYY-MM-DD");
-
     // ✅ Fetch all users (active only if needed)
     const users = await userModel.find(withoutDeletedUsers())
-      .populate({ path: "branch", select: "weekends timeZone" })
+      .populate({ path: "branch", select: "weekends timeZone branchName" })
       .lean();
 
-    // ✅ Fetch today's attendance for all users
-    const attendanceRecords = await AttendanceModel.find({
-      date: dateKey
-    }).lean();
+    const branchIds = [...new Set(users.map(u => u.branch?._id).filter(Boolean))];
+    const branchHolidayMap = await getHolidaysForBranches(branchIds);
 
-    // ✅ Fetch all leaves for today (approved only)
+    // ✅ Fetch all leaves (approved only)
     const leaveRecords = await LeaveModel.find({
-      date: dateKey,
       status: "Approved"
     }).lean();
 
-    // ✅ Convert attendance and leaves to map
-    const attendanceMap = {};
-    attendanceRecords.forEach(att => {
-      attendanceMap[att.userId.toString()] = att;
-    });
-
     const leaveMap = {};
     leaveRecords.forEach(leave => {
-      leaveMap[leave.userId.toString()] = leave;
+      leaveMap[`${leave.userId}_${moment(leave.date).format("YYYY-MM-DD")}`] = leave;
     });
 
     const result = [];
 
     for (const user of users) {
       const userId = user._id.toString();
-      // const userTimeZone = user?.branch?.timeZone || user?.timeZone || "UTC";
       const userTimeZone = user?.timeZone || "UTC";
+      const userBranchId = user.branch?._id?.toString();
 
+      const holidays = branchHolidayMap[userBranchId] || [];
       const branchWeekends = user?.branch?.weekends || [];
-      const currentDay = moment().tz(userTimeZone).format("dddd");
 
-      // ✅ Get branch-specific holidays
-      const holidays = await getBranchHolidaysForUser(user);
+      // ✅ User ke timezone ke hisaab se aaj ka date
+      const userMoment = moment().tz(userTimeZone);
+      const userToday = userMoment.format("YYYY-MM-DD");
+      const currentDay = userMoment.format("dddd");
 
-      const holidayMap = {};
-      holidays.forEach(h => {
-        const key = moment(h.date).tz(user.timeZone).format("YYYY-MM-DD");
-        holidayMap[key] = h;
-      });
-
-      const att = attendanceMap[userId];
-      const leave = leaveMap[userId];
-      const isHoliday = holidayMap[dateKey] ? true : false;
+      // ✅ Holiday map by user timezone
+      const isHoliday = holidays.some(
+        h => moment(h.date).tz(userTimeZone).format("YYYY-MM-DD") === userToday
+      );
       const isWeekend = branchWeekends.includes(currentDay);
 
-      console.log('user', user.email)
-      console.log('currentDay', currentDay)
-      console.log('branchWeekends', branchWeekends)
+      // ✅ Fetch existing attendance for this user + date
+      let att = await AttendanceModel.findOne({ userId, date: userToday }).lean();
+      const leave = leaveMap[userId];
 
+      // ✅ Build record
       let record = {
         user: {
           userId: user._id || null,
@@ -666,31 +527,13 @@ export const getAllUsersTodayAttendance = async (req, res) => {
           salary: user.salary || null,
           role: user.role || null
         },
-        date: dateKey,
+        date: userToday,
         inTime: null,
         outTime: null,
         duration: null,
         status: "Absent"
       };
 
-      // if (att) {
-      //   record.inTime = att.inTime || null;
-      //   record.outTime = att.outTime || null;
-      //   record.duration = att.duration || null;
-      //   record.status = att.status || "Present";
-
-      //   if (isHoliday && att.inTime && att.outTime) {
-      //     record.status = "Over Time";
-      //   } else if (isHoliday) {
-      //     record.status = "Holiday";
-      //   }
-      // } else if (leave) {
-      //   record.status = "Leave";
-      // } else if (isHoliday) {
-      //   record.status = "Holiday";
-      // } else if (isWeekend) {
-      //   record.status = "Weekend";
-      // }
       // ✅ Status calculation
       if (isWeekend) {
         record.status = "Weekend";
@@ -712,10 +555,9 @@ export const getAllUsersTodayAttendance = async (req, res) => {
         record.status = att.status || "Present";
       }
 
-
-      // ✅ DB update / upsert attendance
+      // ✅ DB update / upsert attendance (date = userToday)
       await AttendanceModel.findOneAndUpdate(
-        { userId, date: dateKey },
+        { userId, date: userToday },
         { $set: record },
         { upsert: true, new: true }
       );
@@ -728,7 +570,6 @@ export const getAllUsersTodayAttendance = async (req, res) => {
       statusCode: 200,
       count: result.length,
       message: "All users' attendance for today fetched successfully",
-      date: dateKey,
       totalUsers: result.length,
       data: result
     });
@@ -743,63 +584,71 @@ export const getAllUsersTodayAttendance = async (req, res) => {
   }
 };
 
+
 // Get all users' attendance by date 
 export const getAllUsersAttendanceByDate = async (req, res) => {
   try {
-    const { date } = req.query; // Or req.body if you prefer POST
+    const { date } = req.query; // Or req.body if POST
     const targetDate = date ? moment(date, "YYYY-MM-DD") : moment();
     const dateKey = targetDate.format("YYYY-MM-DD");
-    console.log({ date, targetDate, dateKey })
 
-    // ✅ Fetch all users (active only if needed)
+    // ✅ Fetch all users (active only)
     const users = await userModel.find(withoutDeletedUsers())
       .populate({ path: "branch", select: "weekends timeZone" })
       .lean();
 
-    // ✅ Fetch today's attendance for all users
-    const attendanceRecords = await AttendanceModel.find({ date: dateKey })
-      .select("userId location inTime outTime duration status")
-      .lean();
+    const branchIds = [...new Set(users.map(u => u.branch?._id).filter(Boolean))];
 
+    // ✅ Fetch holidays for all branches
+    const holidays = await holidayModel.find({ branch: { $in: branchIds }, isOptional: false }).lean();
+    const branchHolidayMap = {};
+    holidays.forEach(h => {
+      const key = h.branch.toString();
+      if (!branchHolidayMap[key]) branchHolidayMap[key] = [];
+      branchHolidayMap[key].push(h);
+    });
 
-    // console.log('attendanceRecords',attendanceRecords)
-    // ✅ Fetch all leaves for today (approved only)
-    const leaveRecords = await LeaveModel.find({
-      date: dateKey,
-      status: "Approved"
-    }).lean();
+    // ✅ Fetch attendance & approved leaves for target date
+    const [attendanceRecords, leaveRecords] = await Promise.all([
+      AttendanceModel.find({ date: dateKey }).lean(),
+      LeaveModel.find({ date: dateKey, status: "Approved" }).lean()
+    ]);
 
-    // ✅ Convert attendance and leaves to map
+    // ✅ Convert to maps for quick lookup
     const attendanceMap = {};
     attendanceRecords.forEach(att => {
       attendanceMap[att.userId.toString()] = att;
     });
 
     const leaveMap = {};
-    leaveRecords.forEach(leave => {
-      leaveMap[leave.userId.toString()] = leave;
+    leaveRecords.forEach(lv => {
+      const key = `${lv.userId}_${moment(lv.date).format("YYYY-MM-DD")}`;
+      leaveMap[key] = lv;
     });
 
     const result = [];
+    const bulkOps = [];
 
     for (const user of users) {
       const userId = user._id.toString();
-      // const userTimeZone = user?.branch?.timeZone || user?.timeZone || "UTC";
       const userTimeZone = user.timeZone || "UTC";
+      const branchId = user.branch?._id?.toString();
       const branchWeekends = user?.branch?.weekends || [];
-      const selectedDay = targetDate.clone().tz(userTimeZone).format("dddd");
-      console.log('user', user.email)
-      console.log('selectedDay', selectedDay)
-      console.log('branchWeekends', branchWeekends)
 
-      // ✅ Get branch-specific holidays
-      const holidays = await getBranchHolidaysForUser(user);
-      const holidayMap = {};
-      holidays.forEach(h => {
-        const key = moment(h.date).tz(user.timeZone).format("YYYY-MM-DD");
-        holidayMap[key] = h;
-      });
+      const userMoment = targetDate.clone().tz(userTimeZone);
+      const selectedDay = userMoment.format("dddd");
+      const userDateKey = userMoment.format("YYYY-MM-DD");
 
+      const branchHolidays = branchHolidayMap[branchId] || [];
+      const isHoliday = branchHolidays.some(
+        h => moment(h.date).tz(userTimeZone).format("YYYY-MM-DD") === userDateKey
+      );
+      const isWeekend = branchWeekends.includes(selectedDay);
+
+      const att = attendanceMap[userId];
+      const leave = leaveMap[`${userId}_${userDateKey}`];
+
+      // ✅ Default record
       let record = {
         user: {
           userId: user._id || null,
@@ -810,47 +659,35 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
           designation: user.designation || null,
           salary: user.salary || null,
           role: user.role || null,
-
         },
-        date: dateKey,
-        inTime: null,
-        outTime: null,
-        duration: null,
+        date: userDateKey,
+        inTime: att?.inTime || null,
+        outTime: att?.outTime || null,
+        duration: att?.duration || null,
         status: "Absent",
-        location: { checkIn: {}, checkOut: {} }
+        location: att?.location || { checkIn: {}, checkOut: {} }
       };
 
-      const att = attendanceMap[userId];
-      const leave = leaveMap[userId];
-      const isHoliday = holidayMap[dateKey] ? true : false;
-      const isWeekend = branchWeekends.includes(selectedDay);
+      // ✅ Status logic
+      if (isWeekend) record.status = "Weekend";
+      else if (isHoliday) record.status = att?.inTime && att?.outTime ? "Over Time" : "Holiday";
+      else if (leave) record.status = "Leave";
+      else if (att) record.status = att.status || "Present";
 
-      if (att) {
-        record.inTime = att.inTime;
-        record.outTime = att.outTime;
-        record.duration = att.duration;
-        record.status = att.status || "Present";
-        record.location = att.location || { checkIn: {}, checkOut: {} };
-
-        if (isHoliday && att.inTime && att.outTime) {
-          record.status = "Over Time";
-        } else if (isHoliday) {
-          record.status = "Holiday";
+      // ✅ Prepare bulk write
+      bulkOps.push({
+        updateOne: {
+          filter: { userId, date: userDateKey },
+          update: { $set: record },
+          upsert: true
         }
-      } else if (leave) {
-        record.status = "Leave";
-      } else if (isHoliday) {
-        record.status = "Holiday";
-      } else if (isWeekend) {
-        record.status = "Weekend";
-      }
+      });
 
       result.push(record);
-      await AttendanceModel.findOneAndUpdate(
-        { userId, date: dateKey },
-        { $set: record },
-        { upsert: true, new: true }
-      );
+    }
+
+    if (bulkOps.length > 0) {
+      await AttendanceModel.bulkWrite(bulkOps);
     }
 
     res.status(200).json({
@@ -867,7 +704,7 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
     res.status(500).json({
       success: false,
       statusCode: 500,
-      message: `Failed to fetch all users' attendance `,
+      message: `Failed to fetch all users' attendance`,
       error: err.message
     });
   }
@@ -878,90 +715,18 @@ export const getLoginUserFullAttendanceHistory = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await userModel.findById(userId).populate("branch");
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
 
-    // const userTimeZone = user.timeZone || "UTC";
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user.branch) return res.status(400).json({ success: false, message: "Branch not found" });
+
     const userTimeZone = user.timeZone || "UTC";
 
-    if (!user.branch) {
-      return res.status(400).json({ success: false, message: "Branch not found" });
-    }
-
-    const branchWeekends = user.branch?.weekends || [];
-    const joiningDate = moment(user.joining_date).startOf("day");
-    const today = moment().tz(userTimeZone).startOf("day");
-
-    // ✅ Fetch Attendance, Holidays (filtered by branch), and Leaves
+    // Fetch data
     const attendanceRecords = await AttendanceModel.find({ userId }).lean();
-
-
     const holidayRecords = await getBranchHolidaysForUser(user);
     const leaveRecords = await LeaveModel.find({ userId, status: "Approved" }).lean();
 
-    // ✅ Convert arrays to maps for quick lookup
-    const attendanceMap = {};
-    attendanceRecords.forEach(att => {
-      const attDateKey = moment(att.date).tz(userTimeZone).format("YYYY-MM-DD");
-      attendanceMap[attDateKey] = att;
-    });
-
-    const holidayMap = {};
-    holidayRecords.forEach(holiday => {
-      const key = moment(holiday.date).tz(userTimeZone).format("YYYY-MM-DD");
-      holidayMap[key] = holiday;
-    });
-
-    const leaveMap = {};
-    leaveRecords.forEach(leave => {
-      const key = moment(leave.date).tz(userTimeZone).format("YYYY-MM-DD");
-      leaveMap[key] = leave;
-    });
-
-
-    // ✅ Build full history
-    const fullHistory = [];
-    let current = joiningDate.clone();
-
-    while (current.isSameOrBefore(today)) {
-      const dateKey = current.format("YYYY-MM-DD");
-      const currentDay = current.format("dddd");
-
-      let record = {
-        date: dateKey,
-        status: "Absent",
-        inTime: null,
-        outTime: null,
-        duration: null,
-        leaveType: null,
-        location: { checkIn: {}, checkOut: {} },
-      };
-
-
-      if (attendanceMap[dateKey]) {
-        record = { ...record, ...attendanceMap[dateKey] };
-
-        // ✅ If it's also a holiday for branch → mark as Over Time if inTime & outTime exist
-        if (holidayMap[dateKey]) {
-          if (record.inTime && record.outTime) {
-            record.status = "Over Time";
-          } else {
-            record.status = "Holiday";
-          }
-        }
-      } else if (leaveMap[dateKey]) {
-        record.status = "Leave";
-        record.leaveType = leaveMap[dateKey].leaveType;
-      } else if (holidayMap[dateKey]) {
-        record.status = "Holiday";
-      } else if (branchWeekends.includes(currentDay)) {
-        record.status = "Weekend";
-      }
-
-      fullHistory.push(record);
-      current.add(1, "day");
-    }
+    const fullHistory = buildFullAttendanceHistory(user, attendanceRecords, holidayRecords, leaveRecords, userTimeZone);
 
     res.status(200).json({
       success: true,
@@ -970,12 +735,7 @@ export const getLoginUserFullAttendanceHistory = async (req, res) => {
       data: fullHistory
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      statusCode: 500,
-      message: "Failed to fetch attendance",
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch attendance", error: error.message });
   }
 };
 
@@ -984,91 +744,18 @@ export const getSingleUserFullAttendanceHistory = async (req, res) => {
   try {
     const userId = req.params.id;
     const user = await userModel.findById(userId).populate("branch");
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
 
-    if (!user.branch) {
-      return res.status(400).json({ success: false, message: "Branch not found" });
-    }
-    // const userTimeZone = user.timeZone || "UTC";
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user.branch) return res.status(400).json({ success: false, message: "Branch not found" });
+
     const userTimeZone = user.timeZone || "UTC";
 
-    const branchWeekends = user.branch?.weekends || [];
-    const joiningDate = moment(user.joining_date).startOf("day");
-    const today = moment().tz(userTimeZone).startOf("day");
-
-    // ✅ Fetch Attendance, Holidays (filtered by branch), and Leaves
+    // Fetch data
     const attendanceRecords = await AttendanceModel.find({ userId }).lean();
-
-    // const holidays = await holidayModel.find({ branch: branch._id,isOptional: false, }).sort({ date: 1 });
-    // const holidayRecords = await holidayModel.find({
-    //   isOptional: false,
-    //   branch: branch._id
-    // }).lean();
     const holidayRecords = await getBranchHolidaysForUser(user);
     const leaveRecords = await LeaveModel.find({ userId, status: "Approved" }).lean();
 
-    // ✅ Convert arrays to maps for quick lookup
-    const attendanceMap = {};
-    attendanceRecords.forEach(att => {
-      const attDateKey = moment(att.date).tz(userTimeZone).format("YYYY-MM-DD");
-      attendanceMap[attDateKey] = att;
-    });
-
-    const holidayMap = {};
-    holidayRecords.forEach(holiday => {
-      const key = moment(holiday.date).tz(userTimeZone).format("YYYY-MM-DD");
-      holidayMap[key] = holiday;
-    });
-
-    const leaveMap = {};
-    leaveRecords.forEach(leave => {
-      const key = moment(leave.date).tz(userTimeZone).format("YYYY-MM-DD");
-      leaveMap[key] = leave;
-    });
-
-    // ✅ Build full history
-    const fullHistory = [];
-    let current = joiningDate.clone();
-
-    while (current.isSameOrBefore(today)) {
-      const dateKey = current.format("YYYY-MM-DD");
-      const currentDay = current.format("dddd");
-
-      let record = {
-        date: dateKey,
-        status: "Absent",
-        inTime: null,
-        outTime: null,
-        duration: null,
-        leaveType: null,
-        location: { checkIn: {}, checkOut: {} }
-      };
-
-      if (attendanceMap[dateKey]) {
-        record = { ...record, ...attendanceMap[dateKey] };
-
-        // ✅ If it's also a holiday for branch → mark as Over Time if inTime & outTime exist
-        if (holidayMap[dateKey]) {
-          if (record.inTime && record.outTime) {
-            record.status = "Over Time";
-          } else {
-            record.status = "Holiday";
-          }
-        }
-      } else if (leaveMap[dateKey]) {
-        record.status = "Leave";
-        record.leaveType = leaveMap[dateKey].leaveType;
-      } else if (holidayMap[dateKey]) {
-        record.status = "Holiday";
-      } else if (branchWeekends.includes(currentDay)) {
-        record.status = "Weekend";
-      }
-
-      fullHistory.push(record);
-      current.add(1, "day");
-    }
+    const fullHistory = buildFullAttendanceHistory(user, attendanceRecords, holidayRecords, leaveRecords, userTimeZone);
 
     res.status(200).json({
       success: true,
@@ -1077,12 +764,7 @@ export const getSingleUserFullAttendanceHistory = async (req, res) => {
       data: fullHistory
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      statusCode: 500,
-      message: "Failed to fetch attendance",
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: "Failed to fetch attendance", error: error.message });
   }
 };
 
@@ -1094,63 +776,44 @@ export const getAllUsersFullAttendanceHistory = async (req, res) => {
       .lean();
 
     const today = moment().startOf("day");
-
     const result = [];
 
     for (const user of users) {
       const userId = user._id.toString();
-      // const userTimeZone = user.timeZone || "UTC";
-      const userTimeZone = "UTC";
+      const userTimeZone = user.timeZone || "UTC";
 
-      const branchWeekends = user.branch?.weekends || [];
-      const joiningDate = moment(user.joining_date).startOf("day");
-
-      // ✅ Fetch all data for this user in bulk
+      // ✅ Fetch bulk data for each user
       const [attendanceRecords, leaveRecords, holidayRecords] = await Promise.all([
         AttendanceModel.find({ userId }).lean(),
         LeaveModel.find({ userId, status: "Approved" }).lean(),
         getBranchHolidaysForUser(user)
       ]);
 
-      // ✅ Convert arrays to maps for O(1) lookup
-      const attendanceMap = {};
-      attendanceRecords.forEach(att => {
-        attendanceMap[moment(att.date).format("YYYY-MM-DD")] = att;
-      });
+      // ✅ Build full attendance history using utility
+      const fullHistory = buildFullAttendanceHistory(
+        user,
+        attendanceRecords,
+        holidayRecords,
+        leaveRecords,
+        userTimeZone
+      );
 
-      const holidayMap = {};
-      holidayRecords.forEach(h => {
-        const key = moment(h.date).tz(user.timeZone).format("YYYY-MM-DD");
-        holidayMap[key] = h;
-      });
-
-      const leaveMap = {};
-      leaveRecords.forEach(leave => {
-        leaveMap[moment(leave.date).format("YYYY-MM-DD")] = leave;
-      });
-
-      // ✅ Build attendance history for this user
-      let attendanceCount = 0;
-      let current = joiningDate.clone();
-
-      while (current.isSameOrBefore(today)) {
-        attendanceCount++;
-        current.add(1, "day");
-      }
-
-      // ✅ Push final user object
+      // ✅ Push user object + history
       result.push({
-        userId,
-        empId: user.userId,
-        userName: `${user.first_name} ${user.last_name}`,
-        userEmail: user.email,
-        userPhone: user.phone,
-        joining_date: user.joining_date,
-        department: user.department,
-        designation: user.designation,
-        salary: user.salary,
-        role: user.role,
-        attendanceDays: attendanceCount
+        user: {
+          userId,
+          empId: user.userId,
+          name: `${user.first_name} ${user.last_name}`,
+          email: user.email,
+          phone: user.phone,
+          joining_date: user.joining_date,
+          department: user.department,
+          designation: user.designation,
+          salary: user.salary,
+          role: user.role
+        },
+        history: fullHistory,
+        attendanceDays: fullHistory.length
       });
     }
 
@@ -1170,6 +833,7 @@ export const getAllUsersFullAttendanceHistory = async (req, res) => {
     });
   }
 };
+
 
 
 export const getAllUsersAttendanceReport = async (req, res) => {

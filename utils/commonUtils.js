@@ -3,6 +3,74 @@ import branchModel from "../models/branchModel.js";
 import holidayModel from "../models/holidayModule.js";
 import mongoose from "mongoose";
 import LeaveModel from "../models/leaveModel.js";
+import moment from "moment-timezone";
+
+export const buildFullAttendanceHistory = (user, attendanceRecords, holidayRecords, leaveRecords, userTimeZone) => {
+  const branchWeekends = user.branch?.weekends || [];
+  const joiningDate = moment(user.joining_date).tz(userTimeZone).startOf("day");
+  const today = moment().tz(userTimeZone).startOf("day");
+
+  // Maps for quick lookup
+  const attendanceMap = {};
+  attendanceRecords.forEach(att => {
+    const attDateKey = moment(att.date).tz(userTimeZone).format("YYYY-MM-DD");
+    attendanceMap[attDateKey] = att;
+  });
+
+  const holidayMap = {};
+  holidayRecords.forEach(holiday => {
+    const key = moment(holiday.date).tz(userTimeZone).format("YYYY-MM-DD");
+    holidayMap[key] = holiday;
+  });
+
+  const leaveMap = {};
+  leaveRecords.forEach(leave => {
+    const key = moment(leave.date).tz(userTimeZone).format("YYYY-MM-DD");
+    leaveMap[key] = leave;
+  });
+
+  // Build history
+  const fullHistory = [];
+  let current = joiningDate.clone();
+
+  while (current.isSameOrBefore(today)) {
+    const dateKey = current.format("YYYY-MM-DD");
+    const currentDay = current.format("dddd");
+
+    let record = {
+      date: dateKey,
+      status: "Absent",
+      inTime: null,
+      outTime: null,
+      duration: null,
+      leaveType: null,
+      location: { checkIn: {}, checkOut: {} }
+    };
+
+    if (attendanceMap[dateKey]) {
+      record = { ...record, ...attendanceMap[dateKey] };
+
+      if (holidayMap[dateKey]) {
+        if (record.inTime && record.outTime) record.status = "Over Time";
+        else record.status = "Holiday";
+      }
+    } else if (leaveMap[dateKey]) {
+      record.status = "Leave";
+      record.leaveType = leaveMap[dateKey].leaveType;
+    } else if (holidayMap[dateKey]) {
+      if (record.inTime && record.outTime) record.status = "Over Time";
+      else record.status = "Holiday";
+    } else if (branchWeekends.includes(currentDay)) {
+      record.status = "Weekend";
+    }
+
+    fullHistory.push(record);
+    current.add(1, "day");
+  }
+
+  return fullHistory;
+};
+
 
 export const getBranchHolidaysForUser = async (user) => {
   try {
@@ -49,7 +117,22 @@ export const getBranchHolidaysForUser = async (user) => {
   }
 };
 
+export const getHolidaysForBranches = async (branchIds) => {
+  const holidays = await holidayModel.find({
+    branch: { $in: branchIds },
+    isOptional: false
+  }).lean();
 
+  // Map: branchId -> holidays[]
+  const holidayMap = {};
+  holidays.forEach(h => {
+    const bId = h.branch.toString();
+    if (!holidayMap[bId]) holidayMap[bId] = [];
+    holidayMap[bId].push(h);
+  });
+
+  return holidayMap;
+};
 
 export const skipEmails = ["faisalad@gmail.com", "dummy@gmail.com",'faisalem@gmail.com','faisalem13@gmail.com','faisalem14@gmail.com','faisalem15@gmail.com',"fmslhr@gmail.com","fmslhr1@gmail.com","fmslhr2@gmail.com","fmslhr3@gmail.com","super@gmail.com",'faisalem13@gnail.com','clinton@gmail.com','ajay@falconmsl.com','faisal2@falconmsl.com','faisal@falconmsl.com'];
 
