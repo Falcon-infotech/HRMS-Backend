@@ -166,7 +166,7 @@ export const markOutTime = async (req, res) => {
       todayStatus = "Present";
     } else {
       const workHours = moment.duration(moment(outTime).diff(inTime)).asHours();
-      todayStatus = workHours < 9 ? "Half Day" : "Present";
+      todayStatus = workHours < 9 ? "Present" : "Present";
     }
 
     // Holidays (check in user timezone)
@@ -715,6 +715,7 @@ export const getLoginUserFullAttendanceHistory = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await userModel.findById(userId).populate("branch");
+    console.log("login user ",user);
 
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
     if (!user.branch) return res.status(400).json({ success: false, message: "Branch not found" });
