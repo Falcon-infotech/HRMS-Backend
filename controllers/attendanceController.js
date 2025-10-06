@@ -678,7 +678,16 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
       bulkOps.push({
         updateOne: {
           filter: { userId, date: userDateKey },
-          update: { $set: record },
+          update: {
+            $set: {
+              date: record.date,
+              inTime: record.inTime,
+              outTime: record.outTime,
+              duration: record.duration,
+              status: record.status,
+              location: record.location
+            }
+          },
           upsert: true
         }
       });
@@ -715,7 +724,7 @@ export const getLoginUserFullAttendanceHistory = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await userModel.findById(userId).populate("branch");
-    console.log("login user ",user);
+    console.log("login user ", user);
 
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
     if (!user.branch) return res.status(400).json({ success: false, message: "Branch not found" });
