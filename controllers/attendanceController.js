@@ -822,7 +822,7 @@ export const getAllUsersFullAttendanceHistory = async (req, res) => {
           salary: user.salary,
           role: user.role
         },
-        history: fullHistory,
+        // history: fullHistory,
         attendanceDays: fullHistory.length
       });
     }

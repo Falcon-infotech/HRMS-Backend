@@ -20,6 +20,7 @@ export const applyLeave = async (req, res) => {
     const end = moment.tz(toDate, "YYYY-MM-DD", userTimeZone).endOf("day").utc().toDate();
 
     let leaveBalance = await calculateLeaveBalance(userId);
+    console.log("Calculated Leave Balance in apply:", leaveBalance);
     const sickLeaveCount = await LeaveModel.countDocuments({
       employee: userId,
       status: "approved",
@@ -31,9 +32,8 @@ export const applyLeave = async (req, res) => {
       status: "approved",
       leaveType: "unpaid",
     });
+    const leaveDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
 
-    const leaveDays =
-      Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
 
     const isCasualOrVacation = ["casual", "vacation"].includes(leaveType);
     const isHalfDay = ["firstHalf", "secondHalf"].includes(leaveType);
@@ -130,7 +130,7 @@ export const updateLeaveStatus = async (req, res) => {
     }
 
     let leaveBalance = await calculateLeaveBalance(user._id);
-
+    console.log("Calculated Leave Balance update status:", leaveBalance);
     // ✅ Approval flow
     if (status === "approved" && leave.status !== "approved") {
       const todayUTC = moment.utc().startOf("day").toDate();
@@ -142,45 +142,34 @@ export const updateLeaveStatus = async (req, res) => {
       }
 
       // Attendance marking (convert each day → UTC based string)
+      // Generate leave date range in UTC
       const dates = [];
-      let cursor = moment.utc(leave.fromDate);
-      while (cursor.isSameOrBefore(moment.utc(leave.toDate))) {
+      let cursor = moment.utc(moment(leave.fromDate).startOf("day"));
+      const end = moment.utc(moment(leave.toDate).endOf("day"));
+
+      while (cursor.isSameOrBefore(end, "day")) {
         dates.push(cursor.format("YYYY-MM-DD"));
         cursor.add(1, "day");
       }
 
-      let operations;
-      if (["firstHalf", "secondHalf"].includes(leave.leaveType)) {
-        const leaveLabel = leave.leaveType === "firstHalf" ? "First Half Leave" : "Second Half Leave";
-        operations = dates.map((date) => ({
-          updateOne: {
-            filter: { date, userId: leave.employee },
-            update: { $set: { status: leaveLabel } },
-            upsert: true,
-          },
-        }));
-        leave.leaveTaken = 0.5;
-        leave.leaveBalance = leaveBalance - 0.5;
-      } else {
-        operations = dates.map((date) => ({
-          updateOne: {
-            filter: { date, userId: leave.employee },
-            update: { $set: { status: "Leave" } },
-            upsert: true,
-          },
-        }));
-        if (["casual", "vacation"].includes(leave.leaveType)) {
-          leave.leaveBalance = leaveBalance - leave.leaveTaken;
-        } else if (leave.leaveType === "sick") {
-          user.sickLeaves = (user.sickLeaves || 0) + leave.leaveTaken;
-          leave.sickLeave = user.sickLeaves;
-        } else if (["LOP", "unpaid"].includes(leave.leaveType)) {
-          user.unpaidLeaves = (user.unpaidLeaves || 0) + leave.leaveTaken;
-          leave.unPaidLeave = user.unpaidLeaves;
-        }
-      }
+      // ✅ Create or update attendance only for those leave dates
+      const leaveStatus =
+        leave.leaveType === "firstHalf"
+          ? "First Half Leave"
+          : leave.leaveType === "secondHalf"
+            ? "Second Half Leave"
+            : "Leave";
+
+      const operations = dates.map((date) => ({
+        updateOne: {
+          filter: { date, userId: leave.employee },
+          update: { $set: { status: leaveStatus } },
+          upsert: true, // creates record if not exist
+        },
+      }));
 
       await AttendanceModel.bulkWrite(operations);
+
     }
 
     // ✅ Cancel flow
@@ -473,10 +462,13 @@ export const getLoginUserAllLeaves = async (req, res) => {
         message: "User not authenticated",
       });
     }
+    const user = await userModel.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
     const userId = req.user._id;
     const userTimeZone = req.user?.timeZone || "UTC"; // ✅ User timezone
-    const totalLeavesAllowed = 14;
 
     const leaves = await LeaveModel.find({ employee: userId })
       .sort({ createdAt: -1 })
@@ -484,12 +476,8 @@ export const getLoginUserAllLeaves = async (req, res) => {
       .limit(parseInt(limit))
       .lean();
 
-    // ✅ Used leaves count (only approved)
-    const usedLeaves = leaves
-      .filter((leave) => leave.status === "approved")
-      .reduce((acc, leave) => acc + leave.leaveTaken, 0);
-
-    const leaveBalance = totalLeavesAllowed - usedLeaves;
+    // const leaveBalance = totalLeavesAllowed - usedLeaves;
+    let leaveBalance = await calculateLeaveBalance(userId);
 
     // ✅ Convert dates to user's timezone
     const updatedLeaves = leaves.map((leave) => ({
@@ -507,8 +495,10 @@ export const getLoginUserAllLeaves = async (req, res) => {
         leaves.length > 0
           ? "Leaves fetched successfully."
           : "No leaves found for this user.",
-      count: leaves.length,
+      sickLeave: user.sickLeaves || 0,
+      unPaidLeave: user.unpaidLeaves || 0,
       leaveBalance,
+      count: leaves.length,
       data: updatedLeaves,
     });
   } catch (error) {
