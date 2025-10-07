@@ -129,6 +129,8 @@ export const updateLeaveStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
+    const userTimezone = user.timeZone || "Asia/Kolkata";
+
     let leaveBalance = await calculateLeaveBalance(user._id);
     console.log("Calculated Leave Balance update status:", leaveBalance);
     // ✅ Approval flow
@@ -144,8 +146,8 @@ export const updateLeaveStatus = async (req, res) => {
       // Attendance marking (convert each day → UTC based string)
       // Generate leave date range in UTC
       const dates = [];
-      let cursor = moment.utc(moment(leave.fromDate).startOf("day"));
-      const end = moment.utc(moment(leave.toDate).endOf("day"));
+      let cursor = moment.tz(leave.fromDate, userTimezone).startOf("day");
+      const end = moment.tz(leave.toDate, userTimezone).endOf("day");
 
       while (cursor.isSameOrBefore(end, "day")) {
         dates.push(cursor.format("YYYY-MM-DD"));
@@ -175,8 +177,10 @@ export const updateLeaveStatus = async (req, res) => {
     // ✅ Cancel flow
     if (leave.status === "approved" && status === "cancelled") {
       const dates = [];
-      let cursor = moment.utc(leave.fromDate);
-      while (cursor.isSameOrBefore(moment.utc(leave.toDate))) {
+      let cursor = moment.tz(leave.fromDate, userTimezone).startOf("day");
+      const end = moment.tz(leave.toDate, userTimezone).endOf("day");
+
+      while (cursor.isSameOrBefore(end, "day")) {
         dates.push(cursor.format("YYYY-MM-DD"));
         cursor.add(1, "day");
       }
@@ -190,7 +194,10 @@ export const updateLeaveStatus = async (req, res) => {
         )
       );
 
-      const deduction = ["firstHalf", "secondHalf"].includes(leave.leaveType) ? 0.5 : leave.leaveTaken;
+      const deduction = ["firstHalf", "secondHalf"].includes(leave.leaveType)
+        ? 0.5
+        : leave.leaveTaken;
+
       if (["casual", "vacation"].includes(leave.leaveType)) {
         leave.leaveBalance += deduction;
       } else if (leave.leaveType === "sick") {
