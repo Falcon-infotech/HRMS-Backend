@@ -229,8 +229,8 @@ export const markOutTime = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Punched OUT successfully",
-      inTime: attendanceStatus.inTime,
-      outTime: attendanceStatus.outTime,
+      inTime: attendance.inTime,
+      outTime: attendance.outTime,
       attendance: responseAttendance,
       punchedFrom,
     });
@@ -367,8 +367,8 @@ export const getTodayAttendance = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Today's attendance fetched successfully",
-      inTime: attendanceStatus.inTime,
-      outTime: attendanceStatus.outTime,
+      inTime: attendance.inTime,
+      outTime: attendance.outTime,
       date: today,
       attendance: attendanceResponse,
       branch: {
@@ -773,9 +773,10 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
           upsert: true
         }
       });
-
+      console.log("before format ", record.inTime, record.outTime);
       record.inTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
       record.outTime = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
+      console.log("after format ", record.inTime, record.outTime);
 
       result.push(record);
     }
