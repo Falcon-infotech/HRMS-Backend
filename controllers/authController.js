@@ -34,7 +34,7 @@ const generateRefreshToken = (user) => {
 
 export const login = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, client } = req.body;
     // const user = await userModel.findOne({ email });
     const user = await userModel.findOne(withoutDeletedUsers({ email }));
     if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
@@ -88,7 +88,7 @@ export const login = async (req, res) => {
       statusCode: 200,
       message: 'Login successful',
       accessToken,
-      // refreshToken,
+      refreshToken: client === 'mobile' ? refreshToken : null,
       //  token,
       user,
     });
