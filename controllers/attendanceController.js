@@ -114,10 +114,8 @@ export const markInTime = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      inTime: attendanceStatus.inTime,
-      outTime: attendanceStatus.outTime,
       message: "Punched IN successfully",
-      attendance: responseAttendance,
+      attendance: attendanceStatus,
       punchedFrom,
     });
   } catch (err) {
@@ -229,9 +227,7 @@ export const markOutTime = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Punched OUT successfully",
-      inTime: attendance.inTime,
-      outTime: attendance.outTime,
-      attendance: responseAttendance,
+      attendance: attendance,
       punchedFrom,
     });
   } catch (err) {
@@ -324,7 +320,7 @@ export const getTodayAttendance = async (req, res) => {
         success: true,
         message: `Today is a holiday for branch: ${branch.name}`,
         date: today,
-        attendance: attendanceResponse,
+        attendance: attendance,
         branch: {
           name: branch.name,
           weekends: branchWeekends,
@@ -360,17 +356,16 @@ export const getTodayAttendance = async (req, res) => {
 
     attendanceResponse = {
       ...attendance.toObject(),
-      inTime: attendance.inTime ? moment(attendance.inTime).format("YYYY-MM-DD HH:mm") : null,
-      outTime: attendance.outTime ? moment(attendance.outTime).format("YYYY-MM-DD HH:mm") : null,
+      inTime: attendance.inTime ? moment(attendance.inTime).tz(userTimeZone).format("YYYY-MM-DD HH:mm") : null,
+      outTime: attendance.outTime ? moment(attendance.outTime).tz(userTimeZone).format("YYYY-MM-DD HH:mm") : null,
     };
+
 
     res.status(200).json({
       success: true,
       message: "Today's attendance fetched successfully",
-      inTime: attendance.inTime,
-      outTime: attendance.outTime,
       date: today,
-      attendance: attendanceResponse,
+      attendance: attendance,
       branch: {
         name: branch.name,
         weekends: branchWeekends,
@@ -488,7 +483,7 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
         statusCode: 200,
         message: `Date ${dateKey} is a holiday for branch: ${branch.branchName}`,
         date: dateKey,
-        attendance: attendanceResponse,
+        attendance: attendance,
         branch: {
           name: branch.branchName,
           weekends: branchWeekends,
@@ -528,7 +523,7 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
       statusCode: 200,
       message: `Attendance for ${dateKey} fetched successfully`,
       date: dateKey,
-      attendance: attendanceResponse,
+      attendance: attendance,
       branch: {
         name: branch.name,
         weekends: branchWeekends,
@@ -639,8 +634,8 @@ export const getAllUsersTodayAttendance = async (req, res) => {
         { upsert: true, new: true }
       );
 
-      record.inTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
-      record.outTime = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
+      // record.inTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
+      // record.outTime = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
 
 
       result.push(record);
@@ -773,10 +768,10 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
           upsert: true
         }
       });
-      console.log("before format ", record.inTime, record.outTime);
-      record.inTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
-      record.outTime = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
-      console.log("after format ", record.inTime, record.outTime);
+      // console.log("before format ", record.inTime, record.outTime);
+      // record.inTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
+      // record.outTime = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
+      // console.log("after format ", record.inTime, record.outTime);
 
       result.push(record);
     }
@@ -833,9 +828,9 @@ export const getLoginUserFullAttendanceHistory = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      count: formattedHistory.length,
+      count: fullHistory.length,
       message: "Full Attendance History fetched successfully",
-      data: formattedHistory
+      data: fullHistory
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to fetch attendance", error: error.message });
@@ -869,9 +864,9 @@ export const getSingleUserFullAttendanceHistory = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      count: formattedHistory.length,
+      count: fullHistory.length,
       message: "Full Attendance History fetched successfully",
-      data: formattedHistory
+      data: fullHistory
     });
   } catch (error) {
     res.status(500).json({ success: false, message: "Failed to fetch attendance", error: error.message });
