@@ -34,7 +34,7 @@ const generateRefreshToken = (user) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, client } = req.body;
+    const { email, client ,timeZone} = req.body;
     // const user = await userModel.findOne({ email });
     const user = await userModel.findOne(withoutDeletedUsers({ email }));
     if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
@@ -58,16 +58,16 @@ export const login = async (req, res) => {
     const loginTime = new Date();
     const timezone = geo?.timezone || 'Timezone not found';
 
-    user.timeZone = timezone;
+    user.timeZone = timeZone || timezone;
     user.lastLogin = loginTime;
 
-    const countryDetailsByTimeZone = timezoneToCountryName(timezone);
-    const existingCountry = await countryTZModel.findOne({ tz: timezone });
+    const countryDetailsByTimeZone = timezoneToCountryName(user.timeZone);
+    const existingCountry = await countryTZModel.findOne({ tz: user.timeZone });
 
     if (!existingCountry) {
       const timeZoneObj = await countryTZModel.create({
         name: countryDetailsByTimeZone ? countryDetailsByTimeZone.name : 'Country not found',
-        tz: timezone,
+        tz: user.timeZone,
         code: countryDetailsByTimeZone ? countryDetailsByTimeZone.code : 'Code not found'
       });
       console.log("New timeZoneObject created:", timeZoneObj);
