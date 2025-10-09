@@ -55,7 +55,8 @@ export const markInTime = async (req, res) => {
       { headers: { "User-Agent": process.env.NOMINATION_USER_AGENT } }
     );
 
-    let address = response?.data?.display_name || JSON.stringify(response?.data?.address);
+
+    const displayName = response?.data?.display_name;
     const userAgent = req.headers["user-agent"] || "";
     let punchedFrom = /mobile/i.test(userAgent) ? "Mobile" : /PostmanRuntime/i.test(userAgent) ? "Postman" : "Web";
 
@@ -96,7 +97,7 @@ export const markInTime = async (req, res) => {
           status: todayStatus,
           userName: `${user.first_name} ${user.last_name}`,
           userEmail: user.email,
-          "location.checkIn": { latitude, longitude, address, punchedFrom },
+          "location.checkIn": { latitude, longitude,displayName, punchedFrom },
         },
       },
       { upsert: true, new: true }
@@ -162,7 +163,6 @@ export const markOutTime = async (req, res) => {
       { headers: { "User-Agent": process.env.NOMINATION_USER_AGENT } }
     );
 
-    const address = response?.data?.address;
     const displayName = response?.data?.display_name;
 
     const userAgent = req.headers["user-agent"] || "";
@@ -209,7 +209,7 @@ export const markOutTime = async (req, res) => {
           status: todayStatus,
           userName: `${user.first_name} ${user.last_name}`,
           userEmail: user.email,
-          "location.checkOut": { latitude, longitude, address, displayName, punchedFrom },
+          "location.checkOut": { latitude, longitude, displayName, punchedFrom },
         },
       },
       { upsert: true, new: true }
@@ -597,13 +597,15 @@ export const getAllUsersTodayAttendance = async (req, res) => {
           department: user.department || null,
           designation: user.designation || null,
           salary: user.salary || null,
-          role: user.role || null
+          role: user.role || null,
+
         },
         date: userToday,
         inTime: null,
         outTime: null,
         duration: null,
-        status: "Absent"
+        status: "Absent",
+        location: att?.location || { checkIn: {}, checkOut: {} }
       };
 
       // ✅ Status calculation
@@ -769,9 +771,9 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
         }
       });
       // console.log("before format ", record.inTime, record.outTime);
-      // record.inTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
-      // record.outTime = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
-      // console.log("after format ", record.inTime, record.outTime);
+      // let normalInTime = record.inTime ? moment(record.inTime).format("YYYY-MM-DD HH:mm") : null;
+      // let normalOutTime  = record.outTime ? moment(record.outTime).format("YYYY-MM-DD HH:mm") : null;
+      // console.log("after format ", normalInTime, normalOutTime);
 
       result.push(record);
     }
