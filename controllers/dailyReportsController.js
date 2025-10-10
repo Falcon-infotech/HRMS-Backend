@@ -69,12 +69,15 @@ export const addDailyReport = async (req, res) => {
       error: error.message
     });
   }
-}; 
+};
 
 
 export const getAllReports = async (req, res) => {
   try {
-    const { userId, fromDate, toDate, department, status } = req.query;
+
+    const { userId, fromDate, toDate, department, status, page = 1 } = req.query;
+    const limit = 15;
+    const skip = (page - 1) * limit;
 
     let filter = {};
     if (userId) filter.userId = userId;
@@ -87,7 +90,9 @@ export const getAllReports = async (req, res) => {
 
     const reports = await DailyReportModel.find(filter)
       .populate("userId", "name email role")
-      .sort({ date: -1 });
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(limit);
 
     // If department or status filter is applied, filter nested tasks
     let filteredReports = reports;
@@ -101,9 +106,13 @@ export const getAllReports = async (req, res) => {
       }).filter(r => r.reports.length > 0);
     }
 
+    const totalCount = await DailyReportModel.countDocuments(filter);
+
     res.status(200).json({
       success: true,
-      totalReports: filteredReports.length,
+      totalReports: totalCount,
+      currentPage: Number(page),
+      totalPages: Math.ceil(totalCount / limit),
       reports: filteredReports
     });
 
@@ -197,24 +206,25 @@ export const updateTaskStatus = async (req, res) => {
 };
 
 
-
 export const updateDailyReport = async (req, res) => {
- try {
+  try {
     const { reportId, taskId } = req.params;
     const { taskGiven, taskGivenBy, concernedDepartment, objective, remark } = req.body;
 
 
     // Find and update the specific task in the report
 
-        const report = await DailyReportModel.findOneAndUpdate(
+    const report = await DailyReportModel.findOneAndUpdate(
       { _id: reportId, "reports._id": taskId },
-      { $set: {
+      {
+        $set: {
           "reports.$.taskGiven": taskGiven,
           "reports.$.taskGivenBy": taskGivenBy,
           "reports.$.concernedDepartment": concernedDepartment,
           "reports.$.objective": objective,
           "reports.$.remark": remark
-        }},
+        }
+      },
       { new: true }
     );
 
@@ -243,17 +253,27 @@ export const updateDailyReport = async (req, res) => {
 };
 
 
-
 export const getMyReports = async (req, res) => {
   try {
 
-    const reports = await DailyReportModel.find({ userId: req.user._id })
-      .sort({ date: -1 });
+    const { page = 1 } = req.query;
+    const limit = 15;
+    const skip = (page - 1) * limit;
+
+    const [reports, totalCount] = await Promise.all([
+      DailyReportModel.find({ userId: req.user._id })
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit),
+      DailyReportModel.countDocuments({ userId: req.user._id })
+    ]);
 
     res.status(200).json({
       success: true,
       message: "Fetched your reports successfully",
-      totalReports: reports.length,
+      totalReports: totalCount,
+      currentPage: Number(page),
+      totalPages: Math.ceil(totalCount / limit),
       reports
     });
 
@@ -271,13 +291,24 @@ export const getMyReports = async (req, res) => {
 export const getSingleUserReports = async (req, res) => {
   try {
 
-    const reports = await DailyReportModel.find({ userId: req.params.userId })
-      .sort({ date: -1 });
+    const { page = 1 } = req.query;
+    const limit = 15;
+    const skip = (page - 1) * limit;
+
+    const [reports, totalCount] = await Promise.all([
+      DailyReportModel.find({ userId: req.params.userId })
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(limit),
+      DailyReportModel.countDocuments({ userId: req.params.userId })
+    ]);
 
     res.status(200).json({
       success: true,
       message: "User reports fetched successfully",
-      totalReports: reports.length,
+      totalReports: totalCount,
+      currentPage: Number(page),
+      totalPages: Math.ceil(totalCount / limit),
       reports
     });
 
