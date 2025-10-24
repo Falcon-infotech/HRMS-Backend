@@ -91,6 +91,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, "Designation is required"],
     },
+    currency: {
+      type: String,
+      required: [true, "currency code is required"],
+    },
     branch: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",

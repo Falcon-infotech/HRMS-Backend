@@ -106,7 +106,10 @@ export const getAllUsersWithoutPagination = async (req, res) => {
     // );
 
     // Fetch all users based on filter
-    const users = await User.find(withoutDeletedUsers()).select("first_name last_name email _id").lean();
+    const users = await User.find(withoutDeletedUsers())
+      .select("first_name last_name email _id phone department userId designation joining_date salary")
+      .populate("branch") 
+      .lean();
 
     const total = users.length;
 
@@ -140,9 +143,9 @@ export const getAllDeletedUsers = async (req, res) => {
 
     const filter = { isDeleted: true };
     const users = await User.find(filter).populate({
-        path: "branch",      
-        select: "branchName _id",  
-      }).select('-password -__v')
+      path: "branch",
+      select: "branchName _id",
+    }).select('-password -__v')
     // .skip((page - 1) * limit)
     // .limit(Number(limit));
 
