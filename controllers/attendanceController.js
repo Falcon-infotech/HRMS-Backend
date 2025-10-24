@@ -188,11 +188,11 @@ export const markOutTime = async (req, res) => {
       if (!attendance.inTime && !attendance.outTime) {
         todayStatus = "Holiday";
       } else {
-        todayStatus = "Over Time";
+        todayStatus = "Present";
         await sendNotification({
           forRoles: ["admin", "hr"],
-          title: `${user.first_name} ${user.last_name} Working Over Time`,
-          message: `${user.first_name} ${user.last_name} is working on Holiday as Over Time`,
+          title: `${user.first_name} ${user.last_name} Working Present`,
+          message: `${user.first_name} ${user.last_name} is working on Holiday as Present`,
           type: "user",
           performedBy: user._id,
         });
@@ -613,7 +613,7 @@ export const getAllUsersTodayAttendance = async (req, res) => {
         record.status = "Weekend";
       } else if (isHoliday) {
         if (att && att.inTime && att.outTime) {
-          record.status = "Over Time";
+          record.status = "Present";
           record.inTime = att.inTime || null;
           record.outTime = att.outTime || null;
           record.duration = att.duration || null;
@@ -749,7 +749,7 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
 
       // ✅ Status logic
       if (isWeekend) record.status = "Weekend";
-      else if (isHoliday) record.status = att?.inTime && att?.outTime ? "Over Time" : "Holiday";
+      else if (isHoliday) record.status = att?.inTime && att?.outTime ? "Present" : "Holiday";
       else if (leave) record.status = "Leave";
       else if (att) record.status = att.status || "Present";
 
@@ -1227,7 +1227,7 @@ export const backFillAttendanceWithWeekends = async (req, res) => {
       });
     }
 
-    const branchWeekends = user.branch.weekends || []; // e.g. ["Sunday"] or ["Saturday","Sunday"]
+    const branchWeekends = user.branch.weekends || [];
 
     const staticLocation = {
       latitude: 19.1872137,
@@ -1349,7 +1349,7 @@ export const migrateAttendanceWithUserData = async (req, res) => {
 
 export const findInvalidAttendanceStatus = async () => {
   try {
-    const validStatuses = ['Present', 'Absent', 'Leave', 'Half Day', 'Weekend', 'Over Time', 'Holiday'];
+    const validStatuses = ['Present', 'Absent', 'Leave', 'Half Day', 'Weekend', 'Holiday'];
 
     // Invalid status wale attendance records fetch karte hain
     const invalidRecords = await AttendanceModel.find({

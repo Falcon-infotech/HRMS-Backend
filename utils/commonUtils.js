@@ -51,14 +51,14 @@ export const buildFullAttendanceHistory = (user, attendanceRecords, holidayRecor
       record = { ...record, ...attendanceMap[dateKey] };
 
       if (holidayMap[dateKey]) {
-        if (record.inTime && record.outTime) record.status = "Over Time";
+        if (record.inTime && record.outTime) record.status = "Present";
         else record.status = "Holiday";
       }
     } else if (leaveMap[dateKey]) {
       record.status = "Leave";
       record.leaveType = leaveMap[dateKey].leaveType;
     } else if (holidayMap[dateKey]) {
-      if (record.inTime && record.outTime) record.status = "Over Time";
+      if (record.inTime && record.outTime) record.status = "Present";
       else record.status = "Holiday";
     } else if (branchWeekends.includes(currentDay)) {
       record.status = "Weekend";

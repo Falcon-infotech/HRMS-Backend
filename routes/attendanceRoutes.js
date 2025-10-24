@@ -1,5 +1,5 @@
 import express from 'express';
-import {  backFillAttendance, findInvalidAttendanceStatus, getAllUsersAttendanceByDate, getAllUsersAttendanceReport, getAllUsersFullAttendanceHistory, getAllUsersTodayAttendance, getLoginUserFullAttendanceHistory, getSingleUserAttendanceByDate, getSingleUserFullAttendanceHistory, getTodayAttendance, markInTime, markOutTime, migrateAttendanceWithUserData } from '../controllers/attendanceController.js';
+import {  backFillAttendance, backFillAttendanceWithWeekends, findInvalidAttendanceStatus, getAllUsersAttendanceByDate, getAllUsersAttendanceReport, getAllUsersFullAttendanceHistory, getAllUsersTodayAttendance, getLoginUserFullAttendanceHistory, getSingleUserAttendanceByDate, getSingleUserFullAttendanceHistory, getTodayAttendance, markInTime, markOutTime, migrateAttendanceWithUserData } from '../controllers/attendanceController.js';
 import { authenticate, authorizeRoles } from '../middleware/auth.js';
 import { getSearchAttendanceUsers } from '../controllers/searchController.js';
 
@@ -25,6 +25,6 @@ attendanceRouter.get('/all_user_attendance_history', authenticate, authorizeRole
 
 attendanceRouter.get('/all_user_attendance_report', authenticate, authorizeRoles('admin', 'hr'), getAllUsersAttendanceReport);
 // attendanceRouter.get('/migrate_string_dates', authenticate, authorizeRoles('admin', 'hr'), migrateStringDatesToDateType);
-attendanceRouter.post('/backfillAttendance', backFillAttendance);
+attendanceRouter.post('/backfillAttendance', backFillAttendanceWithWeekends);
 
 export default attendanceRouter;

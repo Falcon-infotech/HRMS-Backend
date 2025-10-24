@@ -119,6 +119,69 @@ export const addPayrollBasicInfo = async (req, res) => {
 };
 
 
+export const getLastPayrollByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const payroll = await payrollModel
+      .findOne({ userId })
+      .sort({ year: -1, month: -1 })
+      .populate("userId", "first_name last_name email role");
+
+    if (!payroll) {
+      // Default empty structure
+      const emptyPayroll = {
+        userId,
+        month: "",
+        year: "",
+        basicSalary: 0,
+        hra: 0,
+        conveyanceAllowance: 0,
+        medicalAllowance: 0,
+        specialAllowance: 0,
+        travelingAllowance: 0,
+        UNA: 0,
+        bonuses: 0,
+        totalAllowances: 0,
+        pfDeduction: 0,
+        loanDeduction: 0,
+        ptDeduction: 0,
+        TDS: 0,
+        totalDeductions: 0,
+        grossSalary: 0,
+        netSalary: 0,
+        totalDays: 0,
+        workedDays: 0,
+        holidayPayout: 0,
+        paymentMethod: "",
+        payDate: "",
+        status: "pending",
+      };
+
+      return res.status(200).json({
+        success: true,
+        message: "No payroll found — returning default empty fields.",
+        data: emptyPayroll,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Last payroll record fetched successfully.",
+      data: payroll,
+    });
+  } catch (error) {
+    console.error("Error fetching last payroll:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+
+
+
 export const updatePayrollBasicInfo = async (req, res) => {
   try {
     	const loginUserId=req.user._id
@@ -283,7 +346,7 @@ export const getSinglePayrollsById = async (req, res) => {
 
     if (employee.role === 'employee') {
       statusFilter = ['processed', 'paid'];
-    } else if (['admin', 'hr'].includes(employee.role)) {
+    } else if (['admin', 'hr','superAdmin'].includes(employee.role)) {
       statusFilter = ['pending', 'processed', 'paid', 'onHold'];
     }
 
