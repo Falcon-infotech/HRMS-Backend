@@ -117,6 +117,7 @@ export const markInTime = async (req, res) => {
       success: true,
       message: "Punched IN successfully",
       attendance: attendanceStatus,
+      userTimeZone,
       punchedFrom,
     });
   } catch (err) {
@@ -228,6 +229,7 @@ export const markOutTime = async (req, res) => {
       success: true,
       message: "Punched OUT successfully",
       attendance: attendance,
+      userTimeZone,
       punchedFrom,
     });
   } catch (err) {
@@ -351,7 +353,7 @@ export const getTodayAttendance = async (req, res) => {
     // Populate user details
     await attendance.populate(
       "userId",
-      "first_name last_name email status department designation salary role"
+      "first_name last_name email status department designation salary role timeZone"
     );
 
     attendanceResponse = {
@@ -509,7 +511,7 @@ export const getSingleUserAttendanceByDate = async (req, res) => {
     // ✅ Populate user details
     await attendance.populate(
       "userId",
-      "first_name last_name email status department designation salary role"
+      "first_name last_name email status department designation salary role timeZone"
     );
 
     attendanceResponse = {
@@ -598,6 +600,7 @@ export const getAllUsersTodayAttendance = async (req, res) => {
           designation: user.designation || null,
           salary: user.salary || null,
           role: user.role || null,
+          timeZone: user.timeZone || null,
 
         },
         date: userToday,
@@ -738,6 +741,7 @@ export const getAllUsersAttendanceByDate = async (req, res) => {
           designation: user.designation || null,
           salary: user.salary || null,
           role: user.role || null,
+          timeZone: user.timeZone || null,
         },
         date: userDateKey,
         inTime: att?.inTime || null,
@@ -917,7 +921,8 @@ export const getAllUsersFullAttendanceHistory = async (req, res) => {
           department: user.department,
           designation: user.designation,
           salary: user.salary,
-          role: user.role
+          role: user.role,
+          timeZone: user.timeZone,
         },
         // history: fullHistory,
         attendanceDays: fullHistory.length

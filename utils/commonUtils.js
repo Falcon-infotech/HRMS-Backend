@@ -44,6 +44,7 @@ export const buildFullAttendanceHistory = (user, attendanceRecords, holidayRecor
       outTime: null,
       duration: null,
       leaveType: null,
+      userTimeZone: userTimeZone,
       location: { checkIn: {}, checkOut: {} }
     };
 
@@ -65,6 +66,7 @@ export const buildFullAttendanceHistory = (user, attendanceRecords, holidayRecor
     }
 
     fullHistory.push(record);
+    // fullHistory.push(record.userTimeZone);
     current.add(1, "day");
   }
 
