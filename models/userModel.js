@@ -93,7 +93,7 @@ const userSchema = new mongoose.Schema(
     },
     currency: {
       type: String,
-      required: [true, "currency code is required"],
+      required: [false, "currency code is required"],
     },
     branch: {
       type: mongoose.Schema.Types.ObjectId,
