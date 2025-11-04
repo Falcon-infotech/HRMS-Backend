@@ -24,6 +24,10 @@ import branchRouter from "./routes/branchRoutes.js";
 import { startCheckInReminderJob } from "./utils/checkInReminderJob.js";
 import dailyReportRouter from "./routes/dailyreportRoutes.js";
 import { updateHalfDayToPresent } from "./utils/commonUtils.js";
+import vehicleRouter from "./routes/vehicleRoutes.js";
+import propertyRouter from "./routes/propertyRoutes.js";
+import licenseRouter from "./routes/licenseRoutes.js";
+import electronicItemRouter from "./routes/electronicItemRoutes.js";
 
 
 
@@ -47,9 +51,9 @@ app.use(cors({
 
     if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
-       return callback(null, true);
+      return callback(null, true);
     } else {
-    return  callback(new Error("Not allowed by CORS"));
+      return callback(new Error("Not allowed by CORS"));
     }
   },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
@@ -81,8 +85,12 @@ app.use('/api/holidays', holidayRouter);
 app.use('/api/cloud_excel', cloudExcelRouter);
 app.use('/api/notifications', notificationRouter);
 app.use('/api/daily_reports', dailyReportRouter);
+app.use('/api/vehicle', vehicleRouter);
+app.use('/api/property', propertyRouter);
+app.use('/api/license', licenseRouter);
+app.use('/api/electronicItem', electronicItemRouter);
 
-app.get('/updateHalfDayToPresent', updateHalfDayToPresent);
+// app.get('/updateHalfDayToPresent', updateHalfDayToPresent);
 // app.get("/proxy/reverse-geocode", async (req, res) => {
 //   const { lat, lon } = req.query;
 //   try {
@@ -97,8 +105,8 @@ app.get('/updateHalfDayToPresent', updateHalfDayToPresent);
 // });
 
 app.get("/", (req, res) => {
-res.send("HRMS Backend is running ");
- });
+  res.send("HRMS Backend is running ");
+});
 
 
 

@@ -21,6 +21,12 @@ const userSchema = new mongoose.Schema(
         ref: "Leave",
       },
     ],
+    Payroll: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Payroll",
+      },
+    ],
     timeZone: { type: String },
     branch: {
       type: mongoose.Schema.Types.ObjectId,
