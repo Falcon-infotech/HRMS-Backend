@@ -160,7 +160,7 @@ export const deleteVehicle = async (req, res) => {
             });
         }
 
-        const deleted = await Vehicle.findByIdAndDelete(id);
+        const deleted = await vehicleModel.findByIdAndDelete(id);
 
         if (!deleted) {
             return res.status(404).json({
@@ -182,3 +182,4 @@ export const deleteVehicle = async (req, res) => {
         });
     }
 };
+

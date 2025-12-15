@@ -19,7 +19,7 @@ employeeRouter.get('/search', getSearchUsers);
 
 employeeRouter.get('/:id', authorizeRoles('admin', 'hr', 'employee'), getUserById);
 employeeRouter.put('/:id', authorizeRoles('admin', 'hr'), updateUser);
-employeeRouter.patch('/:id', authorizeRoles('admin', 'hr'), deleteUser);
+employeeRouter.patch('/:id', authorizeRoles( "superAdmin"), deleteUser);
 
 employeeRouter.put('/reset_password/:id', authorizeRoles('superAdmin'), updateUserPassword);
 employeeRouter.put('/update_role/:id', authorizeRoles('superAdmin'), updateUserRole);

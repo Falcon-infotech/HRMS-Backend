@@ -1275,11 +1275,15 @@ export const backFillAttendanceWithWeekends = async (req, res) => {
           });
         } else {
           // ✅ Normal Present
-          const checkInMinute = 30 + Math.floor(Math.random() * 31);
-          const inTime = moment(`${date} 08:${checkInMinute}`, "YYYY-MM-DD HH:mm").toDate();
+          const checkInMinute = String(30 + Math.floor(Math.random() * 31)).padStart(2, "0");
+          const inTime = moment(date).set({ hour: 8, minute: checkInMinute }).toDate();
 
-          const checkOutMinute = 20 + Math.floor(Math.random() * 21);
-          const outTime = moment(`${date} 18:${checkOutMinute}`, "YYYY-MM-DD HH:mm").toDate();
+          const checkOutMinute = String(20 + Math.floor(Math.random() * 21)).padStart(2, "0");
+          const outTime = moment(date).set({ hour: 18, minute: checkOutMinute }).toDate();
+
+          if (!moment(inTime).isValid() || !moment(outTime).isValid()) {
+            throw new Error(`Generated invalid time for date ${date}`);
+          }
 
           attendanceRecords.push({
             userId,

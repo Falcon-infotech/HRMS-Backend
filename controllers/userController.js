@@ -503,7 +503,7 @@ export const deleteUser = async (req, res) => {
     }
 
     await sendNotification({
-      forRoles: ["admin", "hr"],
+      forRoles: ["admin", "hr","superAdmin"],
       title: "User Deleted",
       message: `${loginUser.first_name} ${loginUser.last_name} deleted user ${deletedUser.first_name} ${deletedUser.last_name}`,
       link: `/employees`,

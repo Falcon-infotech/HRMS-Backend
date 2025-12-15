@@ -9,7 +9,7 @@ hrRouter.use(authenticate);
 hrRouter.get('/', authorizeRoles('admin'),getAllUsers);
 hrRouter.get('/:id', authorizeRoles('admin'), getUserById);
 hrRouter.put('/:id', authorizeRoles('admin'), updateUser);
-hrRouter.delete('/:id', authorizeRoles('admin'), deleteUser);
+hrRouter.delete('/:id', authorizeRoles('superAdmin'), deleteUser);
 
 
 export default hrRouter;
