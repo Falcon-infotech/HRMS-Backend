@@ -117,7 +117,12 @@ export const refreshToken = async (req, res) => {
     }
 
     const existingToken = await refreshModel.findOne({ token });
-    if (!existingToken) return res.status(403).json({ message: "Refresh token is invalid or already used" });
+    // if (!existingToken) return res.status(403).json({ message: "Refresh token is invalid or already used" });
+    if (!existingToken) {
+        // token reuse detected
+        await refreshModel.deleteMany({ userId: decoded._id });
+        return res.status(403).json({ message: "Session expired, login again" });
+      }
 
     jwt.verify(token, process.env.REFRESH_TOKEN_SECRET, async (err, decoded) => {
       if (err) {
