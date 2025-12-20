@@ -43,7 +43,8 @@ const allowedOrigins = [
   "http://localhost:8081",
   "https://hrms-frontend-git-dev-falcon-infotechs-projects.vercel.app",
   "https://hrms-frontend-amber.vercel.app",
-  "http://pc80w8o0g00s80ksoggc4s84.43.204.178.166.sslip.io"
+  "http://pc80w8o0g00s80ksoggc4s84.43.204.178.166.sslip.io",
+  "http://koc4k40848g84k4cg8ook4oc.43.204.178.166.sslip.io"
 ];
 
 app.use(cors({
